@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   deploy:
@@ -22,45 +25,48 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:  ${{ env.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Creating S3 bucket and ignore if it already exists
+      - name: Create S3 bucket (ignore if exists)
         run: |
-          aws s3api create-bucket \
-            --bucket $BUCKET_NAME \
-            --region $AWS_REGION \
-            --create-bucket-cofiguration LocationConstraint=$AWS_REGION || echo "Bucket may already exist"
-                        
-      - name: Enabling Static Website Hosting
+          if [ "${AWS_REGION}" = "us-east-1" ]; then
+            aws s3api create-bucket --bucket $BUCKET_NAME || echo "Bucket may already exist"
+          else
+            aws s3api create-bucket --bucket $BUCKET_NAME --region $AWS_REGION --create-bucket-configuration LocationConstraint=$AWS_REGION || echo "Bucket may already exist"
+          fi
+
+      - name: Disable public access block (required for website hosting)
         run: |
-          aws s3 website s3://$BUCKET_NAME/ \
-            --index-document index.html 
+          aws s3api put-public-access-block --bucket $BUCKET_NAME --public-access-block-configuration BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false
+
+      - name: Enable Static Website Hosting
+        run: |
+          aws s3 website s3://$BUCKET_NAME/ --index-document index.html
 
       - name: Set Public Bucket Policy
-        run: | 
+        run: |
           POLICY=$(cat <<EOF
-            {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Sid": "PublicReadGetObject",
-                        "Effect": "Allow",
-                        "Principal": "*",
-                        "Action": "s3:GetObject",
-                        "Resource": "arn:aws:s3:::$BUCKET_NAME/*"
-                    }
-                ]
-            }
+          {
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Sid": "PublicReadGetObject",
+                      "Effect": "Allow",
+                      "Principal": "*",
+                      "Action": "s3:GetObject",
+                      "Resource": "arn:aws:s3:::$BUCKET_NAME/*"
+                  }
+              ]
+          }
           EOF
           )
-
           echo "$POLICY" > bucket-policy.json
-          aws s2api put-bucket-policy --bucket $BUCKET_NAME --policy file://bucket-policy.json
+          aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy file://bucket-policy.json
 
-      - name: Uploading Website Files
+      - name: Upload Website Files
         run: |
-           aws se3 sync s3://$BUCKET_NAME --delete --exclude ".git/*"
+          aws s3 sync . s3://$BUCKET_NAME --delete --exclude ".git/*"
 
       - name: Website URL
-        run: | 
-          echo "Website URL: http://$BUCKET_NAME.s3-website-$AWS_REGION.amazonaws.com "
+        run: |
+          echo "Website URL: http://$BUCKET_NAME.s3-website-$AWS_REGION.amazonaws.com"
