@@ -3,7 +3,7 @@ name: Deploy a Static Website to S3 Using GitHub Actions
 on:
   push:
     branches:
-      - 
+      - main
   workflow_dispatch:
 
 
@@ -37,4 +37,30 @@ jobs:
             --index-document index.html 
 
       - name: Set Public Bucket Policy
-          
+        run: | 
+          POLICY=$(cat <<EOF
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "PublicReadGetObject",
+                        "Effect": "Allow",
+                        "Principal": "*",
+                        "Action": "s3:GetObject",
+                        "Resource": "arn:aws:s3:::$BUCKET_NAME/*"
+                    }
+                ]
+            }
+          EOF
+          )
+
+          echo "$POLICY" > bucket-policy.json
+          aws s2api put-bucket-policy --bucket $BUCKET_NAME --policy file://bucket-policy.json
+
+      - name: Uploading Website Files
+        run: |
+           aws se3 sync s3://$BUCKET_NAME --delete --exclude ".git/*"
+
+      - name: Website URL
+        run: | 
+          echo "Website URL: http://$BUCKET_NAME.s3-website-$AWS_REGION.amazonaws.com "
